@@ -176,6 +176,26 @@ export default function Page() {
   }, [roomId]);
 
   useEffect(() => {
+    if (!roomId) return;
+
+    const heartbeat = async () => {
+      await supabase
+        .from("participants")
+        .update({ last_seen: new Date().toISOString() })
+        .eq("room_id", roomId)
+        .eq("username", username);
+    };
+
+    heartbeat();
+
+    const interval = window.setInterval(heartbeat, 10000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [roomId, username]);
+
+  useEffect(() => {
     if (!roomId || participants.length !== 2 || !localStreamRef.current) return;
 
     const users = participants.map((p) => p.username).sort();
