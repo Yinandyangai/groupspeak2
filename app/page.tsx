@@ -414,8 +414,6 @@ export default function Page() {
         return;
       }
 
-      await supabase.from("signals").delete().eq("room_id", joinedRoomId);
-
       roomIdRef.current = joinedRoomId;
       setRoomId(joinedRoomId);
     } catch (err) {
@@ -444,8 +442,6 @@ export default function Page() {
         setLoading(false);
         return;
       }
-
-      await supabase.from("signals").delete().eq("room_id", joinedRoomId);
 
       roomIdRef.current = joinedRoomId;
       setRoomId(joinedRoomId);
