@@ -8,6 +8,7 @@ export default function Page() {
   const [participants, setParticipants] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("idle");
+  const [audioEnabled, setAudioEnabled] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -18,6 +19,7 @@ export default function Page() {
   const roomIdRef = useRef<string | null>(null);
   const connectionKeyRef = useRef<string | null>(null);
   const usernameRef = useRef("user-" + crypto.randomUUID());
+  const audioEnabledRef = useRef(false);
 
   const username = usernameRef.current;
 
@@ -36,12 +38,23 @@ export default function Page() {
   const attachRemoteVideo = useCallback((video: HTMLVideoElement | null) => {
     remoteVideoRef.current = video;
 
+    if (video) {
+      video.muted = false;
+      video.volume = 1;
+    }
+
     if (
       video &&
       remoteStreamRef.current &&
       video.srcObject !== remoteStreamRef.current
     ) {
       video.srcObject = remoteStreamRef.current;
+
+      if (audioEnabledRef.current) {
+        video.play().catch((err) => {
+          console.warn("Remote video play error:", err);
+        });
+      }
     }
   }, []);
 
@@ -62,6 +75,22 @@ export default function Page() {
     return stream;
   };
 
+  const enableAudio = async () => {
+    audioEnabledRef.current = true;
+    setAudioEnabled(true);
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.muted = false;
+      remoteVideoRef.current.volume = 1;
+
+      try {
+        await remoteVideoRef.current.play();
+      } catch (err) {
+        console.warn("Remote audio play blocked:", err);
+      }
+    }
+  };
+
   const resetConnection = () => {
     peerRef.current?.close();
     peerRef.current = null;
@@ -69,6 +98,8 @@ export default function Page() {
     remoteStreamRef.current = null;
     connectionKeyRef.current = null;
     setStatus("idle");
+    setAudioEnabled(false);
+    audioEnabledRef.current = false;
 
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
@@ -238,6 +269,8 @@ export default function Page() {
 
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.muted = false;
+      remoteVideoRef.current.volume = 1;
     }
 
     const flushPendingCandidates = async () => {
@@ -263,11 +296,19 @@ export default function Page() {
         remoteStream.addTrack(event.track);
       }
 
-      if (
-        remoteVideoRef.current &&
-        remoteVideoRef.current.srcObject !== remoteStream
-      ) {
-        remoteVideoRef.current.srcObject = remoteStream;
+      if (remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== remoteStream) {
+          remoteVideoRef.current.srcObject = remoteStream;
+        }
+
+        remoteVideoRef.current.muted = false;
+        remoteVideoRef.current.volume = 1;
+
+        if (audioEnabledRef.current) {
+          remoteVideoRef.current.play().catch((err) => {
+            console.warn("Remote audio play error:", err);
+          });
+        }
       }
     };
 
@@ -538,6 +579,22 @@ export default function Page() {
           {loading ? "Switching..." : "Next"}
         </button>
       </div>
+
+      {participants.length === 2 && !audioEnabled && (
+        <div style={{ textAlign: "center", marginBottom: 10 }}>
+          <button
+            onClick={enableAudio}
+            style={{
+              padding: "8px 18px",
+              background: "white",
+              color: "black",
+              borderRadius: 8,
+            }}
+          >
+            Enable Audio
+          </button>
+        </div>
+      )}
 
       <div
         style={{
