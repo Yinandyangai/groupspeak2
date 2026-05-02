@@ -24,7 +24,11 @@ export default function Page() {
   const attachLocalVideo = useCallback((video: HTMLVideoElement | null) => {
     localVideoRef.current = video;
 
-    if (video && localStreamRef.current && video.srcObject !== localStreamRef.current) {
+    if (
+      video &&
+      localStreamRef.current &&
+      video.srcObject !== localStreamRef.current
+    ) {
       video.srcObject = localStreamRef.current;
     }
   }, []);
@@ -32,7 +36,11 @@ export default function Page() {
   const attachRemoteVideo = useCallback((video: HTMLVideoElement | null) => {
     remoteVideoRef.current = video;
 
-    if (video && remoteStreamRef.current && video.srcObject !== remoteStreamRef.current) {
+    if (
+      video &&
+      remoteStreamRef.current &&
+      video.srcObject !== remoteStreamRef.current
+    ) {
       video.srcObject = remoteStreamRef.current;
     }
   }, []);
@@ -69,7 +77,10 @@ export default function Page() {
 
   const leaveRoom = async () => {
     const currentRoomId = roomIdRef.current;
+
     if (!currentRoomId) return;
+
+    resetConnection();
 
     await supabase
       .from("participants")
@@ -77,15 +88,34 @@ export default function Page() {
       .eq("room_id", currentRoomId)
       .eq("username", username);
 
+    await supabase
+      .from("signals")
+      .delete()
+      .eq("room_id", currentRoomId);
+
+    const { data: remainingParticipants } = await supabase
+      .from("participants")
+      .select("id")
+      .eq("room_id", currentRoomId);
+
+    if (!remainingParticipants || remainingParticipants.length === 0) {
+      await supabase.from("rooms").delete().eq("id", currentRoomId);
+    } else {
+      await supabase
+        .from("rooms")
+        .update({ status: "waiting" })
+        .eq("id", currentRoomId);
+    }
+
     roomIdRef.current = null;
     setRoomId(null);
     setParticipants([]);
-    resetConnection();
   };
 
   useEffect(() => {
     const handlePageHide = () => {
       const currentRoomId = roomIdRef.current;
+
       if (!currentRoomId) return;
 
       supabase
@@ -213,7 +243,10 @@ export default function Page() {
         remoteStream.addTrack(event.track);
       }
 
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStream) {
+      if (
+        remoteVideoRef.current &&
+        remoteVideoRef.current.srcObject !== remoteStream
+      ) {
         remoteVideoRef.current.srcObject = remoteStream;
       }
     };
@@ -223,7 +256,9 @@ export default function Page() {
     };
 
     pc.onicecandidate = async (event) => {
-      if (!event.candidate || cancelled || pc.signalingState === "closed") return;
+      if (!event.candidate || cancelled || pc.signalingState === "closed") {
+        return;
+      }
 
       const { error } = await supabase.from("signals").insert([
         {
@@ -336,7 +371,9 @@ export default function Page() {
             },
           ]);
 
-          if (offerError) console.warn("Offer insert error:", offerError.message);
+          if (offerError) {
+            console.warn("Offer insert error:", offerError.message);
+          }
         } catch (err) {
           console.warn("Subscribe/signaling error:", err);
         }
@@ -364,63 +401,23 @@ export default function Page() {
       await startCamera();
       await leaveRoom();
 
-      const { data: waitingParticipants, error: waitingError } = await supabase
-        .from("participants")
-        .select("room_id")
-        .limit(100);
-
-      if (waitingError) {
-        console.warn("Matchmaking error:", waitingError.message);
-        setLoading(false);
-        return;
-      }
-
-      const counts: Record<string, number> = {};
-
-      (waitingParticipants ?? []).forEach((p) => {
-        counts[p.room_id] = (counts[p.room_id] || 0) + 1;
-      });
-
-      let roomToJoin: string | null = null;
-
-      for (const candidateRoomId of Object.keys(counts)) {
-        if (counts[candidateRoomId] === 1) {
-          roomToJoin = candidateRoomId;
-          break;
-        }
-      }
-
-      if (!roomToJoin) {
-        const { data, error } = await supabase
-          .from("rooms")
-          .insert([{}])
-          .select()
-          .single();
-
-        if (error || !data) {
-          console.warn("Room create error:", error?.message);
-          setLoading(false);
-          return;
-        }
-
-        roomToJoin = data.id;
-      }
-
-      const { error: insertError } = await supabase.from("participants").insert([
+      const { data: joinedRoomId, error } = await supabase.rpc(
+        "join_random_room",
         {
-          room_id: roomToJoin,
-          username,
-        },
-      ]);
+          p_username: username,
+        }
+      );
 
-      if (insertError) {
-        console.warn("Participant insert error:", insertError.message);
+      if (error || !joinedRoomId) {
+        console.warn("Join room error:", error?.message);
         setLoading(false);
         return;
       }
 
-      roomIdRef.current = roomToJoin;
-      setRoomId(roomToJoin);
+      await supabase.from("signals").delete().eq("room_id", joinedRoomId);
+
+      roomIdRef.current = joinedRoomId;
+      setRoomId(joinedRoomId);
     } catch (err) {
       console.warn("Start error:", err);
     }
@@ -435,33 +432,23 @@ export default function Page() {
     try {
       await leaveRoom();
 
-      const { data, error } = await supabase
-        .from("rooms")
-        .insert([{}])
-        .select()
-        .single();
+      const { data: joinedRoomId, error } = await supabase.rpc(
+        "join_random_room",
+        {
+          p_username: username,
+        }
+      );
 
-      if (error || !data) {
+      if (error || !joinedRoomId) {
         console.warn("Next room error:", error?.message);
         setLoading(false);
         return;
       }
 
-      const { error: insertError } = await supabase.from("participants").insert([
-        {
-          room_id: data.id,
-          username,
-        },
-      ]);
+      await supabase.from("signals").delete().eq("room_id", joinedRoomId);
 
-      if (insertError) {
-        console.warn("Next participant insert error:", insertError.message);
-        setLoading(false);
-        return;
-      }
-
-      roomIdRef.current = data.id;
-      setRoomId(data.id);
+      roomIdRef.current = joinedRoomId;
+      setRoomId(joinedRoomId);
     } catch (err) {
       console.warn("Next error:", err);
     }
@@ -471,9 +458,32 @@ export default function Page() {
 
   if (!roomId) {
     return (
-      <div style={{ background: "black", color: "white", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20 }}>
+      <div
+        style={{
+          background: "black",
+          color: "white",
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+          gap: 20,
+        }}
+      >
         <h1 style={{ fontSize: 32 }}>Groupspeak</h1>
-        <button onClick={start} disabled={loading} style={{ padding: "10px 20px", background: "white", color: "black", borderRadius: 8, opacity: loading ? 0.5 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+
+        <button
+          onClick={start}
+          disabled={loading}
+          style={{
+            padding: "10px 20px",
+            background: "white",
+            color: "black",
+            borderRadius: 8,
+            opacity: loading ? 0.5 : 1,
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
           {loading ? "Starting..." : "Start"}
         </button>
       </div>
@@ -481,20 +491,73 @@ export default function Page() {
   }
 
   return (
-    <div style={{ background: "black", color: "white", height: "100vh", display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        background: "black",
+        color: "white",
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <div style={{ textAlign: "center", padding: 10, opacity: 0.8 }}>
-        {participants.length < 2 ? `Waiting for someone... (${participants.length}/2)` : `Connected: ${status}`}
+        {participants.length < 2
+          ? `Waiting for someone... (${participants.length}/2)`
+          : `Connected: ${status}`}
       </div>
 
       <div style={{ textAlign: "center", marginBottom: 10 }}>
-        <button onClick={next} disabled={loading} style={{ padding: "8px 18px", background: "white", color: "black", borderRadius: 8, opacity: loading ? 0.5 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+        <button
+          onClick={next}
+          disabled={loading}
+          style={{
+            padding: "8px 18px",
+            background: "white",
+            color: "black",
+            borderRadius: 8,
+            opacity: loading ? 0.5 : 1,
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
           {loading ? "Switching..." : "Next"}
         </button>
       </div>
 
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: 10 }}>
-        <video ref={attachLocalVideo} autoPlay muted playsInline style={{ width: "100%", height: "100%", background: "#000", borderRadius: 16, objectFit: "cover" }} />
-        <video ref={attachRemoteVideo} autoPlay muted playsInline style={{ width: "100%", height: "100%", background: "#000", borderRadius: 16, objectFit: "cover" }} />
+      <div
+        style={{
+          flex: 1,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 10,
+          padding: 10,
+        }}
+      >
+        <video
+          ref={attachLocalVideo}
+          autoPlay
+          muted
+          playsInline
+          style={{
+            width: "100%",
+            height: "100%",
+            background: "#000",
+            borderRadius: 16,
+            objectFit: "cover",
+          }}
+        />
+
+        <video
+          ref={attachRemoteVideo}
+          autoPlay
+          playsInline
+          style={{
+            width: "100%",
+            height: "100%",
+            background: "#000",
+            borderRadius: 16,
+            objectFit: "cover",
+          }}
+        />
       </div>
     </div>
   );
